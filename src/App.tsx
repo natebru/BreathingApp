@@ -1,5 +1,21 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import './App.css';
+import { Phase, BreathingSettings, BREATHING_PRESETS, CompletedSession } from './types';
+import { saveSession, getStreak, getTodaysMinutes, getGoal } from './storage';
+import SessionSummary from './components/SessionSummary';
+import StatsPanel from './components/StatsPanel';
+
+import forestBg from './assets/backgrounds/forest.jpg';
+import oceanBg from './assets/backgrounds/ocean.jpg';
+import mountainBg from './assets/backgrounds/mountain.jpg';
+import spaceBg from './assets/backgrounds/space.jpg';
+
+const backgroundImages: Record<string, string> = {
+  forest: forestBg,
+  ocean: oceanBg,
+  mountain: mountainBg,
+  space: spaceBg,
+};
 
 interface Particle {
   id: number;
@@ -11,32 +27,25 @@ interface Particle {
   opacity: number;
 }
 
-interface BreathingSettings {
-  inhaleTime: number;
-  holdTime: number;
-  exhaleTime: number;
-  pauseTime: number;
-  background: 'forest' | 'ocean' | 'mountain' | 'space' | 'default';
-  sessionDuration: number; // in minutes
-}
-
 function App() {
-  const [phase, setPhase] = useState<'inhale' | 'hold' | 'exhale' | 'pause'>('inhale');
+  const [phase, setPhase] = useState<Phase>('inhale');
   const [count, setCount] = useState(4);
   const [isActive, setIsActive] = useState(false);
   const [particles, setParticles] = useState<Particle[]>([]);
   const [settings, setSettings] = useState<BreathingSettings>({
-    inhaleTime: 4,
-    holdTime: 4,
-    exhaleTime: 4,
-    pauseTime: 1,
+    pattern: BREATHING_PRESETS[0],
     background: 'default',
-    sessionDuration: 5 // default 5 minutes
+    sessionDuration: 5,
   });
   const [showSettings, setShowSettings] = useState(false);
+  const [showStats, setShowStats] = useState(false);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [sessionStartTime, setSessionStartTime] = useState<number | null>(null);
   const [remainingTime, setRemainingTime] = useState<number | null>(null);
+  const [completedSession, setCompletedSession] = useState<CompletedSession | null>(null);
+  const sessionElapsedRef = useRef(0);
+
+  const { pattern } = settings;
 
   // Enhanced particle animation effect
   useEffect(() => {
@@ -53,159 +62,191 @@ function App() {
       size: Math.random() * 6 + 2,
       speed: Math.random() * 1.5 + 0.5,
       angle: Math.random() * Math.PI * 2,
-      opacity: Math.random() * 0.5 + 0.3
+      opacity: Math.random() * 0.5 + 0.3,
     }));
-
     setParticles(newParticles);
 
-    const animateParticles = () => {
-      setParticles(prevParticles => 
-        prevParticles.map(particle => ({
-          ...particle,
-          x: (particle.x + Math.cos(particle.angle) * particle.speed + window.innerWidth) % window.innerWidth,
-          y: (particle.y + Math.sin(particle.angle) * particle.speed + window.innerHeight) % window.innerHeight,
-          opacity: particle.opacity + Math.sin(Date.now() / 1000) * 0.1,
-          angle: particle.angle + Math.sin(Date.now() / 2000) * 0.02
-        }))
+    const animation = setInterval(() => {
+      setParticles(prev =>
+        prev.map(p => ({
+          ...p,
+          x: (p.x + Math.cos(p.angle) * p.speed + window.innerWidth) % window.innerWidth,
+          y: (p.y + Math.sin(p.angle) * p.speed + window.innerHeight) % window.innerHeight,
+          opacity: p.opacity + Math.sin(Date.now() / 1000) * 0.1,
+          angle: p.angle + Math.sin(Date.now() / 2000) * 0.02,
+        })),
       );
-    };
-
-    const animation = setInterval(animateParticles, 50);
+    }, 50);
     return () => clearInterval(animation);
   }, [isActive]);
 
-  // Helper function to transition to next phase
-  const transitionToNextPhase = useCallback(() => {
-    if (phase === 'inhale') {
-      setPhase('hold');
-      setCount(settings.holdTime);
-    } else if (phase === 'hold') {
-      setPhase('exhale');
-      setCount(settings.exhaleTime);
-    } else if (phase === 'exhale') {
-      setPhase('pause');
-      setCount(settings.pauseTime);
-    } else {
-      setPhase('inhale');
-      setCount(settings.inhaleTime);
+  // Get the effective duration for a phase, skipping phases with 0 duration
+  const getNextPhase = useCallback((currentPhase: Phase): { phase: Phase; duration: number } => {
+    const order: Phase[] = ['inhale', 'hold', 'exhale', 'pause'];
+    const durations: Record<Phase, number> = {
+      inhale: pattern.inhaleTime,
+      hold: pattern.holdTime,
+      exhale: pattern.exhaleTime,
+      pause: pattern.pauseTime,
+    };
+
+    let idx = order.indexOf(currentPhase);
+    // Try up to 4 times to find next phase with duration > 0
+    for (let i = 0; i < 4; i++) {
+      idx = (idx + 1) % 4;
+      if (durations[order[idx]] > 0) {
+        return { phase: order[idx], duration: durations[order[idx]] };
+      }
     }
-  }, [phase, settings]);
+    // Fallback (shouldn't happen with valid presets)
+    return { phase: 'inhale', duration: pattern.inhaleTime };
+  }, [pattern]);
+
+  const transitionToNextPhase = useCallback(() => {
+    const next = getNextPhase(phase);
+    setPhase(next.phase);
+    setCount(next.duration);
+  }, [phase, getNextPhase]);
 
   // Breathing timer effect
   useEffect(() => {
-    let interval: NodeJS.Timeout;
-    
-    if (isActive) {
-      interval = setInterval(() => {
-        setCount((prevCount) => {
-          if (prevCount <= 1) {
-            transitionToNextPhase();
-            return prevCount;
-          }
-          return prevCount - 1;
-        });
-      }, 1000);
-    }
-    
-    return () => {
-      if (interval) {
-        clearInterval(interval);
-      }
-    };
+    if (!isActive) return;
+    const interval = setInterval(() => {
+      setCount(prev => {
+        if (prev <= 1) {
+          transitionToNextPhase();
+          return prev;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
   }, [isActive, transitionToNextPhase]);
 
   // Stopwatch effect
   useEffect(() => {
-    let interval: NodeJS.Timeout;
-    
-    if (isActive) {
-      if (!sessionStartTime) {
-        setSessionStartTime(Date.now());
-        setElapsedTime(0);
-      }
-      
-      interval = setInterval(() => {
-        if (sessionStartTime) {
-          const currentTime = Date.now();
-          const timeElapsed = Math.floor((currentTime - sessionStartTime) / 1000);
-          setElapsedTime(timeElapsed);
-        }
-      }, 100);
-    } else {
+    if (!isActive) {
       setSessionStartTime(null);
+      return;
     }
-    
-    return () => {
-      if (interval) {
-        clearInterval(interval);
+    if (!sessionStartTime) {
+      setSessionStartTime(Date.now());
+      setElapsedTime(0);
+    }
+    const interval = setInterval(() => {
+      if (sessionStartTime) {
+        const elapsed = Math.floor((Date.now() - sessionStartTime) / 1000);
+        setElapsedTime(elapsed);
+        sessionElapsedRef.current = elapsed;
       }
-    };
+    }, 100);
+    return () => clearInterval(interval);
   }, [isActive, sessionStartTime]);
 
-  // Add this effect for session timer
+  // Session duration auto-stop
+  const finishSession = useCallback((elapsed: number) => {
+    const session: CompletedSession = {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      date: new Date().toISOString(),
+      durationSeconds: elapsed,
+      patternName: pattern.name,
+      completedFull: elapsed >= settings.sessionDuration * 60,
+    };
+    saveSession(session);
+    setIsActive(false);
+    setSessionStartTime(null);
+    setRemainingTime(null);
+    setCompletedSession(session);
+  }, [pattern.name, settings.sessionDuration]);
+
   useEffect(() => {
     if (isActive && settings.sessionDuration > 0) {
       const totalSeconds = settings.sessionDuration * 60;
       setRemainingTime(totalSeconds - elapsedTime);
-      
       if (elapsedTime >= totalSeconds) {
-        setIsActive(false);
-        setSessionStartTime(null);
-        setElapsedTime(0);
-        setRemainingTime(null);
+        finishSession(elapsedTime);
       }
     }
-  }, [isActive, elapsedTime, settings.sessionDuration]);
+  }, [isActive, elapsedTime, settings.sessionDuration, finishSession]);
 
   const toggleBreathing = () => {
-    setIsActive(!isActive);
-    if (!isActive) {
-      setPhase('inhale');
-      setCount(settings.inhaleTime);
+    if (isActive) {
+      // Manual stop — still save the session
+      finishSession(sessionElapsedRef.current);
+    } else {
+      // Find first phase with duration > 0
+      const durations: Record<Phase, number> = {
+        inhale: pattern.inhaleTime,
+        hold: pattern.holdTime,
+        exhale: pattern.exhaleTime,
+        pause: pattern.pauseTime,
+      };
+      const order: Phase[] = ['inhale', 'hold', 'exhale', 'pause'];
+      const startPhase = order.find(p => durations[p] > 0) || 'inhale';
+      setPhase(startPhase);
+      setCount(durations[startPhase]);
       setSessionStartTime(Date.now());
       setElapsedTime(0);
+      sessionElapsedRef.current = 0;
       setRemainingTime(settings.sessionDuration * 60);
+      setIsActive(true);
     }
   };
 
-  const handleSettingChange = (setting: keyof BreathingSettings, value: number) => {
+  const handlePatternSelect = (presetName: string) => {
+    const preset = BREATHING_PRESETS.find(p => p.name === presetName);
+    if (preset) {
+      setSettings(prev => ({ ...prev, pattern: { ...preset } }));
+    }
+  };
+
+  const handleTimingChange = (field: 'inhaleTime' | 'holdTime' | 'exhaleTime' | 'pauseTime', value: number) => {
+    const min = (field === 'holdTime' || field === 'pauseTime') ? 0 : 1;
     setSettings(prev => ({
       ...prev,
-      [setting]: Math.max(1, Math.min(10, value))
+      pattern: {
+        ...prev.pattern,
+        name: 'Custom',
+        [field]: Math.max(min, Math.min(10, value)),
+      },
+    }));
+  };
+
+  const handleSessionDurationChange = (value: number) => {
+    setSettings(prev => ({
+      ...prev,
+      sessionDuration: Math.max(1, Math.min(60, value)),
     }));
   };
 
   const handleBackgroundChange = (value: BreathingSettings['background']) => {
-    setSettings(prev => ({
-      ...prev,
-      background: value
-    }));
+    setSettings(prev => ({ ...prev, background: value }));
   };
 
   const formatTime = (timeInSeconds: number): string => {
-    const minutes = Math.floor(timeInSeconds / 60);
-    const seconds = timeInSeconds % 60;
+    const minutes = Math.floor(Math.max(0, timeInSeconds) / 60);
+    const seconds = Math.max(0, timeInSeconds) % 60;
     return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
   };
 
-  // Helper function to get particle opacity based on phase
   const getParticleOpacity = (baseOpacity: number) => {
     switch (phase) {
-      case 'inhale':
-        return baseOpacity * 0.8;
-      case 'hold':
-        return baseOpacity;
-      case 'exhale':
-        return baseOpacity * 0.6;
-      case 'pause':
-        return baseOpacity * 0.4;
-      default:
-        return baseOpacity;
+      case 'inhale': return baseOpacity * 0.8;
+      case 'hold': return baseOpacity;
+      case 'exhale': return baseOpacity * 0.6;
+      case 'pause': return baseOpacity * 0.4;
+      default: return baseOpacity;
     }
   };
 
+  const bgStyle = settings.background !== 'default' && backgroundImages[settings.background]
+    ? { backgroundImage: `linear-gradient(rgba(0,0,0,0.4),rgba(0,0,0,0.4)), url(${backgroundImages[settings.background]})` }
+    : undefined;
+
+  const streak = getStreak();
+
   return (
-    <div className={`App background-${settings.background}`}>
+    <div className={`App ${settings.background === 'default' ? 'background-default' : 'background-image'}`} style={bgStyle}>
       {isActive && particles.map(particle => (
         <div
           key={particle.id}
@@ -219,7 +260,11 @@ function App() {
           }}
         />
       ))}
-      
+
+      {streak > 0 && !isActive && (
+        <div className="streak-badge">🔥 {streak} day{streak !== 1 ? 's' : ''}</div>
+      )}
+
       <div className={`breathing-circle ${isActive ? 'active' : ''} ${phase}`}>
         <div className="count">{count}</div>
         <div className="phase">{phase}</div>
@@ -227,24 +272,43 @@ function App() {
           <div className="timer">{formatTime(remainingTime)}</div>
         )}
       </div>
-      
+
       <div className="stopwatch">
-        {isActive || elapsedTime > 0 ? formatTime(elapsedTime) : "--:--"}
+        {isActive || elapsedTime > 0 ? formatTime(elapsedTime) : '--:--'}
       </div>
-      
+
       <button className="start-button" onClick={toggleBreathing}>
         {isActive ? 'Stop Session' : 'Start Session'}
       </button>
-      <button className="settings-button" onClick={() => setShowSettings(!showSettings)}>
-        ⚙️
-      </button>
+
+      <div className="top-buttons">
+        <button className="icon-button" onClick={() => setShowStats(true)} title="Your Progress">
+          📊
+        </button>
+        <button className="icon-button" onClick={() => setShowSettings(!showSettings)} title="Settings">
+          ⚙️
+        </button>
+      </div>
+
       {showSettings && (
         <div className="settings-panel">
           <div className="setting-item">
+            <label>Pattern:</label>
+            <select
+              value={pattern.name}
+              onChange={e => handlePatternSelect(e.target.value)}
+              disabled={isActive}
+            >
+              {BREATHING_PRESETS.map(p => (
+                <option key={p.name} value={p.name}>{p.name}</option>
+              ))}
+            </select>
+          </div>
+          <div className="setting-item">
             <label>Background:</label>
-            <select 
+            <select
               value={settings.background}
-              onChange={(e) => handleBackgroundChange(e.target.value as BreathingSettings['background'])}
+              onChange={e => handleBackgroundChange(e.target.value as BreathingSettings['background'])}
               disabled={isActive}
             >
               <option value="default">Default</option>
@@ -255,62 +319,47 @@ function App() {
             </select>
           </div>
           <div className="setting-item">
-            <label>Inhale Duration (s):</label>
-            <input
-              type="number"
-              min="1"
-              max="10"
-              value={settings.inhaleTime}
-              onChange={(e) => handleSettingChange('inhaleTime', parseInt(e.target.value))}
-              disabled={isActive}
-            />
+            <label>Inhale (s):</label>
+            <input type="number" min="1" max="10" value={pattern.inhaleTime}
+              onChange={e => handleTimingChange('inhaleTime', parseInt(e.target.value))} disabled={isActive} />
           </div>
           <div className="setting-item">
-            <label>Hold Duration (s):</label>
-            <input
-              type="number"
-              min="1"
-              max="10"
-              value={settings.holdTime}
-              onChange={(e) => handleSettingChange('holdTime', parseInt(e.target.value))}
-              disabled={isActive}
-            />
+            <label>Hold (s):</label>
+            <input type="number" min="0" max="10" value={pattern.holdTime}
+              onChange={e => handleTimingChange('holdTime', parseInt(e.target.value))} disabled={isActive} />
           </div>
           <div className="setting-item">
-            <label>Exhale Duration (s):</label>
-            <input
-              type="number"
-              min="1"
-              max="10"
-              value={settings.exhaleTime}
-              onChange={(e) => handleSettingChange('exhaleTime', parseInt(e.target.value))}
-              disabled={isActive}
-            />
+            <label>Exhale (s):</label>
+            <input type="number" min="1" max="10" value={pattern.exhaleTime}
+              onChange={e => handleTimingChange('exhaleTime', parseInt(e.target.value))} disabled={isActive} />
           </div>
           <div className="setting-item">
-            <label>Pause Duration (s):</label>
-            <input
-              type="number"
-              min="1"
-              max="10"
-              value={settings.pauseTime}
-              onChange={(e) => handleSettingChange('pauseTime', parseInt(e.target.value))}
-              disabled={isActive}
-            />
+            <label>Pause (s):</label>
+            <input type="number" min="0" max="10" value={pattern.pauseTime}
+              onChange={e => handleTimingChange('pauseTime', parseInt(e.target.value))} disabled={isActive} />
           </div>
           <div className="setting-item">
-            <label>Session Duration (min):</label>
-            <input
-              type="number"
-              min="1"
-              max="60"
-              value={settings.sessionDuration}
-              onChange={(e) => handleSettingChange('sessionDuration', parseInt(e.target.value))}
-              disabled={isActive}
-            />
+            <label>Session (min):</label>
+            <input type="number" min="1" max="60" value={settings.sessionDuration}
+              onChange={e => handleSessionDurationChange(parseInt(e.target.value))} disabled={isActive} />
           </div>
         </div>
       )}
+
+      {completedSession && (
+        <SessionSummary
+          session={completedSession}
+          streak={getStreak()}
+          todaysMinutes={getTodaysMinutes()}
+          dailyGoal={getGoal().dailyMinutes}
+          onClose={() => {
+            setCompletedSession(null);
+            setElapsedTime(0);
+          }}
+        />
+      )}
+
+      {showStats && <StatsPanel onClose={() => setShowStats(false)} />}
     </div>
   );
 }

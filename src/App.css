@@ -28,24 +28,10 @@
   background: radial-gradient(circle at center, #2a3441 0%, #1a1f25 100%);
 }
 
-.background-forest {
-  background: linear-gradient(rgba(0, 0, 0, 0.4), rgba(0, 0, 0, 0.4)),
-              url('../public/backgrounds/forest.jpg') center/cover no-repeat;
-}
-
-.background-ocean {
-  background: linear-gradient(rgba(0, 0, 0, 0.4), rgba(0, 0, 0, 0.4)),
-              url('../public/backgrounds/ocean.jpg') center/cover no-repeat;
-}
-
-.background-mountain {
-  background: linear-gradient(rgba(0, 0, 0, 0.4), rgba(0, 0, 0, 0.4)),
-              url('../public/backgrounds/mountain.jpg') center/cover no-repeat;
-}
-
-.background-space {
-  background: linear-gradient(rgba(0, 0, 0, 0.6), rgba(0, 0, 0, 0.6)),
-              url('../public/backgrounds/space.jpg') center/cover no-repeat;
+.background-image {
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
 }
 
 .breathing-circle {
@@ -185,10 +171,15 @@
   transform: translateX(100%);
 }
 
-.settings-button {
+.top-buttons {
   position: absolute;
   top: 20px;
   right: 20px;
+  display: flex;
+  gap: 10px;
+}
+
+.icon-button {
   padding: 12px 18px;
   font-size: 20px;
   background: rgba(97, 218, 251, 0.1);
@@ -200,10 +191,25 @@
   backdrop-filter: blur(10px);
 }
 
-.settings-button:hover {
+.icon-button:hover {
   background: rgba(97, 218, 251, 0.15);
   transform: translateY(-2px);
   border-color: rgba(97, 218, 251, 0.5);
+}
+
+.streak-badge {
+  position: absolute;
+  top: 24px;
+  left: 24px;
+  font-size: 16px;
+  font-weight: 500;
+  color: #ffd700;
+  background: rgba(255, 215, 0, 0.1);
+  border: 1px solid rgba(255, 215, 0, 0.3);
+  border-radius: 20px;
+  padding: 8px 16px;
+  backdrop-filter: blur(10px);
+  letter-spacing: 0.5px;
 }
 
 .settings-panel {
@@ -330,4 +336,12 @@
 
 .setting-item input[type="number"] {
   max-width: 80px;
+}
+
+.stopwatch {
+  font-size: 18px;
+  font-weight: 300;
+  letter-spacing: 2px;
+  color: rgba(255, 255, 255, 0.5);
+  margin-bottom: 24px;
 }
