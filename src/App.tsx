@@ -264,9 +264,17 @@ function App() {
 
   const streak = getStreak();
 
-  // Dynamic transition duration: match the phase length so animation completes in time
+  const TRANSITION_COMPLETION_RATIO = 0.85;
+  const MIN_TRANSITION_DURATION_SECONDS = 0.5;
+  const MAX_TRANSITION_DURATION_SECONDS = 3;
+
+  // Keep the circle animation slightly ahead of the phase timing, while preventing
+  // transitions from becoming too abrupt on short phases or too slow on long ones.
   const phaseDuration = getPhaseDuration(phase, pattern);
-  const transitionDuration = Math.max(0.5, Math.min(phaseDuration * 0.85, 3));
+  const transitionDuration = Math.max(
+    MIN_TRANSITION_DURATION_SECONDS,
+    Math.min(phaseDuration * TRANSITION_COMPLETION_RATIO, MAX_TRANSITION_DURATION_SECONDS)
+  );
   const circleStyle = isActive ? {
     transitionDuration: `${transitionDuration}s`,
   } : undefined;
