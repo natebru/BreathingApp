@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useReducer } from 'react';
 import './App.css';
-import { Phase, BreathingSettings, BREATHING_PRESETS, CompletedSession } from './types';
+import { Phase, BreathingSettings, BREATHING_PRESETS, BreathingPattern, CompletedSession } from './types';
 import { saveSession, getStreak, getTodaysMinutes, getGoal } from './storage';
 import SessionSummary from './components/SessionSummary';
 import StatsPanel from './components/StatsPanel';
@@ -27,9 +27,60 @@ interface Particle {
   opacity: number;
 }
 
+// Atomic state machine for breathing phases
+interface BreathState {
+  phase: Phase;
+  count: number;
+}
+
+function getNextPhase(currentPhase: Phase, pattern: BreathingPattern): { phase: Phase; duration: number } {
+  const order: Phase[] = ['inhale', 'hold', 'exhale', 'pause'];
+  const durations: Record<Phase, number> = {
+    inhale: pattern.inhaleTime,
+    hold: pattern.holdTime,
+    exhale: pattern.exhaleTime,
+    pause: pattern.pauseTime,
+  };
+  let idx = order.indexOf(currentPhase);
+  for (let i = 0; i < 4; i++) {
+    idx = (idx + 1) % 4;
+    if (durations[order[idx]] > 0) {
+      return { phase: order[idx], duration: durations[order[idx]] };
+    }
+  }
+  return { phase: 'inhale', duration: pattern.inhaleTime };
+}
+
+type BreathAction = { type: 'tick'; pattern: BreathingPattern } | { type: 'reset'; phase: Phase; count: number };
+
+function breathReducer(state: BreathState, action: BreathAction): BreathState {
+  switch (action.type) {
+    case 'tick': {
+      if (state.count <= 1) {
+        const next = getNextPhase(state.phase, action.pattern);
+        return { phase: next.phase, count: next.duration };
+      }
+      return { ...state, count: state.count - 1 };
+    }
+    case 'reset':
+      return { phase: action.phase, count: action.count };
+    default:
+      return state;
+  }
+}
+
+function getPhaseDuration(phase: Phase, pattern: BreathingPattern): number {
+  const map: Record<Phase, number> = {
+    inhale: pattern.inhaleTime,
+    hold: pattern.holdTime,
+    exhale: pattern.exhaleTime,
+    pause: pattern.pauseTime,
+  };
+  return map[phase];
+}
+
 function App() {
-  const [phase, setPhase] = useState<Phase>('inhale');
-  const [count, setCount] = useState(4);
+  const [breathState, dispatch] = useReducer(breathReducer, { phase: 'inhale' as Phase, count: 4 });
   const [isActive, setIsActive] = useState(false);
   const [particles, setParticles] = useState<Particle[]>([]);
   const [settings, setSettings] = useState<BreathingSettings>({
@@ -44,8 +95,13 @@ function App() {
   const [remainingTime, setRemainingTime] = useState<number | null>(null);
   const [completedSession, setCompletedSession] = useState<CompletedSession | null>(null);
   const sessionElapsedRef = useRef(0);
+  const patternRef = useRef(settings.pattern);
 
   const { pattern } = settings;
+  const { phase, count } = breathState;
+
+  // Keep pattern ref in sync for the timer
+  useEffect(() => { patternRef.current = pattern; }, [pattern]);
 
   // Enhanced particle animation effect
   useEffect(() => {
@@ -80,48 +136,14 @@ function App() {
     return () => clearInterval(animation);
   }, [isActive]);
 
-  // Get the effective duration for a phase, skipping phases with 0 duration
-  const getNextPhase = useCallback((currentPhase: Phase): { phase: Phase; duration: number } => {
-    const order: Phase[] = ['inhale', 'hold', 'exhale', 'pause'];
-    const durations: Record<Phase, number> = {
-      inhale: pattern.inhaleTime,
-      hold: pattern.holdTime,
-      exhale: pattern.exhaleTime,
-      pause: pattern.pauseTime,
-    };
-
-    let idx = order.indexOf(currentPhase);
-    // Try up to 4 times to find next phase with duration > 0
-    for (let i = 0; i < 4; i++) {
-      idx = (idx + 1) % 4;
-      if (durations[order[idx]] > 0) {
-        return { phase: order[idx], duration: durations[order[idx]] };
-      }
-    }
-    // Fallback (shouldn't happen with valid presets)
-    return { phase: 'inhale', duration: pattern.inhaleTime };
-  }, [pattern]);
-
-  const transitionToNextPhase = useCallback(() => {
-    const next = getNextPhase(phase);
-    setPhase(next.phase);
-    setCount(next.duration);
-  }, [phase, getNextPhase]);
-
-  // Breathing timer effect
+  // Stable breathing timer — only depends on isActive, uses ref for pattern
   useEffect(() => {
     if (!isActive) return;
     const interval = setInterval(() => {
-      setCount(prev => {
-        if (prev <= 1) {
-          transitionToNextPhase();
-          return prev;
-        }
-        return prev - 1;
-      });
+      dispatch({ type: 'tick', pattern: patternRef.current });
     }, 1000);
     return () => clearInterval(interval);
-  }, [isActive, transitionToNextPhase]);
+  }, [isActive]);
 
   // Stopwatch effect
   useEffect(() => {
@@ -171,10 +193,8 @@ function App() {
 
   const toggleBreathing = () => {
     if (isActive) {
-      // Manual stop — still save the session
       finishSession(sessionElapsedRef.current);
     } else {
-      // Find first phase with duration > 0
       const durations: Record<Phase, number> = {
         inhale: pattern.inhaleTime,
         hold: pattern.holdTime,
@@ -183,8 +203,7 @@ function App() {
       };
       const order: Phase[] = ['inhale', 'hold', 'exhale', 'pause'];
       const startPhase = order.find(p => durations[p] > 0) || 'inhale';
-      setPhase(startPhase);
-      setCount(durations[startPhase]);
+      dispatch({ type: 'reset', phase: startPhase, count: durations[startPhase] });
       setSessionStartTime(Date.now());
       setElapsedTime(0);
       sessionElapsedRef.current = 0;
@@ -245,6 +264,21 @@ function App() {
 
   const streak = getStreak();
 
+  const TRANSITION_COMPLETION_RATIO = 0.85;
+  const MIN_TRANSITION_DURATION_SECONDS = 0.5;
+  const MAX_TRANSITION_DURATION_SECONDS = 3;
+
+  // Keep the circle animation slightly ahead of the phase timing, while preventing
+  // transitions from becoming too abrupt on short phases or too slow on long ones.
+  const phaseDuration = getPhaseDuration(phase, pattern);
+  const transitionDuration = Math.max(
+    MIN_TRANSITION_DURATION_SECONDS,
+    Math.min(phaseDuration * TRANSITION_COMPLETION_RATIO, MAX_TRANSITION_DURATION_SECONDS)
+  );
+  const circleStyle = isActive ? {
+    transitionDuration: `${transitionDuration}s`,
+  } : undefined;
+
   return (
     <div className={`App ${settings.background === 'default' ? 'background-default' : 'background-image'}`} style={bgStyle}>
       {isActive && particles.map(particle => (
@@ -265,7 +299,7 @@ function App() {
         <div className="streak-badge">🔥 {streak} day{streak !== 1 ? 's' : ''}</div>
       )}
 
-      <div className={`breathing-circle ${isActive ? 'active' : ''} ${phase}`}>
+      <div className={`breathing-circle ${isActive ? 'active' : ''} ${phase}`} style={circleStyle}>
         <div className="count">{count}</div>
         <div className="phase">{phase}</div>
         {remainingTime !== null && (
