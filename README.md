@@ -4,6 +4,18 @@ A calming breathing exercise and meditation tracking app. Choose from guided bre
 
 **[Try it live →](https://pausestate.net)**
 
+## Demo
+
+<!-- Replace the image below with your own recording:
+     1. Record a short GIF or MP4 of the app in action
+     2. Place it in the repo (e.g. demo/pausestate-demo.gif)
+     3. Update the path below
+     You can use tools like LICEcap, Kap, or ShareX to record a GIF -->
+
+<p align="center">
+  <img src="demo/pausestate-demo.gif" alt="PauseState Demo" width="600" />
+</p>
+
 ## Features
 
 - **Guided Breathing Patterns** — Box Breathing (4-4-4-4), Relaxing 4-7-8, Deep Calm, Energizing, or fully customizable timings
