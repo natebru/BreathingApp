@@ -1,8 +1,8 @@
-# 🧘 Breathe & Relax
+# 🧘 PauseState
 
 A calming breathing exercise and meditation tracking app. Choose from guided breathing patterns, track your daily meditation habits, and build a consistent practice — all in your browser, no account required.
 
-**[Try it live →](https://natebru.github.io/BreathingApp)**
+**[Try it live →](https://pausestate.net)**
 
 ## Features
 
@@ -49,3 +49,4 @@ React 19 - TypeScript - CSS animations - localStorage - GitHub Pages
 ## License
 
 [MIT](LICENSE)
+

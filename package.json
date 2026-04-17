@@ -1,8 +1,8 @@
 {
-  "name": "breathing-app",
+  "name": "pausestate",
   "version": "1.0.0",
   "private": true,
-  "homepage": "https://natebru.github.io/BreathingApp",
+  "homepage": "https://pausestate.net",
   "dependencies": {
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.6.4",
