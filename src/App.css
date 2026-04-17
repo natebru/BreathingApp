@@ -239,6 +239,11 @@
   cursor: pointer;
 }
 
+.settings-panel select option {
+  background: #1a1f25;
+  color: #fff;
+}
+
 .settings-panel select:focus {
   outline: none;
   border-color: rgba(97, 218, 251, 0.6);
